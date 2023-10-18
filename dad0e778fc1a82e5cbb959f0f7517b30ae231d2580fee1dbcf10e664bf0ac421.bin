@@ -1,0 +1,63 @@
+#!/bin/bash
+
+osquery_path="/usr/bin/osqueryi"
+logfile="osquery_log.txt"
+html_output="osquery_dashboard.html"
+duration=300  # 5 minutes in seconds
+
+if [ -f "$osquery_path" ]; then
+    echo "Entering osqueryi shell:"
+    "$osquery_path" << EOF
+    -- your osquery commands go here
+EOF
+    echo "Entered osqueryi shell"
+
+    # Run queries in a loop for the specified duration
+    end_time=$((SECONDS+duration))
+    while [ $SECONDS -lt $end_time ]; do
+        echo "Running queries..."
+        
+        # Calculate CPU usage and RAM summary
+        cpu_summary=$("$osquery_path" << EOF
+        SELECT ROUND(((SUM(user_time + system_time) / SUM(cpu_time.tsb - cpu_time.itsb)) * 100), 2) AS cpu_usage FROM cpu_time;
+EOF
+)
+        ram_summary=$("$osquery_path" << EOF
+        SELECT ROUND(AVG(physical_memory), 2) AS avg_ram FROM memory_info;
+EOF
+)
+        echo "CPU Usage Summary: $cpu_summary"
+        echo "RAM Usage Summary: $ram_summary"
+
+        # Add separator
+        echo "----------------------------------------" >> "$logfile"
+        
+        # Run your queries and append results to the logfile
+        "$osquery_path" << EOF >> "$logfile"
+        SELECT pid, uid, name, ROUND(((user_time + system_time) / (cpu_time.tsb - cpu_time.itsb)) * 100, 2) AS percentage FROM processes, (SELECT (SUM(user) + SUM(nice) + SUM(system) + SUM(idle) * 1.0) AS tsb, SUM(COALESCE(idle, 0)) + SUM(COALESCE(iowait, 0)) AS itsb FROM cpu_time) AS cpu_time ORDER BY user_time+system_time DESC LIMIT 10;
+        SELECT pid, name, ROUND((total_size * '10e-7'), 2) AS used FROM processes ORDER BY total_size DESC LIMIT 10;
+EOF
+
+        # Add distance between queries
+        echo -e "\n\n" >> "$logfile"
+        
+        sleep 60  # Wait for 60 seconds before running queries again
+    done
+
+    echo "Finished running queries for $duration seconds"
+
+    # Generate HTML dashboard with gnuplot-generated chart
+    echo "<html><body><h1>Osquery Dashboard</h1>" > "$html_output"
+    echo "<h2>CPU Usage Summary:</h2><pre>$cpu_summary</pre>" >> "$html_output"
+    echo "<h2>RAM Usage Summary:</h2><pre>$ram_summary</pre>" >> "$html_output"
+    echo "<h2>Results:</h2><pre>" >> "$html_output"
+    cat "$logfile" >> "$html_output"
+    echo "</pre></body></html>" >> "$html_output"
+
+    echo "HTML dashboard saved to $html_output"
+else
+    echo "osqueryi not found at $osquery_path"
+fi
+
+
+
