@@ -1,2 +1,2 @@
 # Source_code
-here secret
+Discord only no Github allowed
